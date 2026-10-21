@@ -1,0 +1,126 @@
+
+import time
+
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
+
+
+TIKTOK_URL = "https://www.tiktok.com"
+WAIT_TIMEOUT = 15
+
+
+def iniciar_navegador():
+    options = webdriver.ChromeOptions()
+    options.add_argument("--start-maximized")
+
+    driver = webdriver.Chrome(options=options)
+    driver.get(TIKTOK_URL)
+
+    return driver
+
+
+def aguardar_login(driver):
+    input(
+        "\nEntre na sua conta manualmente no navegador. "
+        "Quando terminar, pressione ENTER aqui..."
+    )
+
+
+def abrir_reposts(driver, usuario):
+    driver.get(f"{TIKTOK_URL}/@{usuario}/repost")
+
+    input(
+        "\nConfira se a página de reposts abriu corretamente. "
+        "Pressione ENTER para continuar..."
+    )
+
+
+def encontrar_botao_remover(driver):
+    seletores = [
+        (By.CSS_SELECTOR, "[data-e2e='repost-action-tag']"),
+        (
+            By.CSS_SELECTOR,
+            "[data-e2e='video-share-repost'][aria-label='Remove repost']",
+        ),
+        (By.CSS_SELECTOR, "#icon-element-repost[aria-label='Remove repost']"),
+    ]
+
+    for tipo, seletor in seletores:
+        elementos = driver.find_elements(tipo, seletor)
+
+        for elemento in elementos:
+            if elemento.is_displayed():
+                return elemento
+
+    return None
+
+
+def remover_repost_atual(driver):
+    botao = encontrar_botao_remover(driver)
+
+    if botao is None:
+        return False
+
+    try:
+        driver.execute_script(
+            "arguments[0].scrollIntoView({block: 'center'});",
+            botao,
+        )
+        botao.click()
+
+        time.sleep(1)
+
+        return True
+
+    except Exception as erro:
+        print(f"\nNão foi possível clicar no botão: {erro}")
+        return False
+
+
+def main():
+    usuario = input("Nome de usuário do TikTok (sem @): ").strip()
+
+    if not usuario:
+        print("Você precisa informar um nome de usuário.")
+        return
+
+    driver = iniciar_navegador()
+
+    try:
+        aguardar_login(driver)
+        abrir_reposts(driver, usuario)
+
+        total_tentativas = 0
+
+        print("\nContador iniciado.")
+        print("Use o navegador para verificar cada remoção.")
+        print("Pressione CTRL+C no terminal para encerrar.\n")
+
+        while True:
+            input("Pressione ENTER para tentar remover o repost atual...")
+
+            sucesso = remover_repost_atual(driver)
+
+            if sucesso:
+                total_tentativas += 1
+                print(
+                    f"Tentativas de remoção: {total_tentativas}"
+                )
+                print(
+                    "Confira no TikTok se o repost foi realmente removido."
+                )
+            else:
+                print("Botão de remoção não encontrado.")
+
+    except KeyboardInterrupt:
+        print(f"\nEncerrado. Tentativas: {total_tentativas if 'total_tentativas' in locals() else 0}")
+
+    finally:
+        driver.quit()
+
+
+if __name__ == "__main__":
+    main()

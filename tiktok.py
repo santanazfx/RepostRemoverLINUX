@@ -1,11 +1,10 @@
-"""
-tiktok_delete_repost.py
-"""
+"""Interactive TikTok repost management."""
+
+import getpass
 import time
-from selenium import webdriver
+import contador
+from selenium_driver import start_driver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import (
@@ -14,60 +13,63 @@ from selenium.common.exceptions import (
     StaleElementReferenceException,
     ElementClickInterceptedException,
 )
-from webdriver_manager.chrome import ChromeDriverManager
-
 
 TIKTOK_URL = "https://www.tiktok.com"
 WAIT_TIMEOUT = 15
 
 
-def start_driver():
-    """Membuka Chrome (tanpa login)."""
-    options = webdriver.ChromeOptions()
-    options.add_argument("--start-maximized")
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option("useAutomationExtension", False)
+def login_with_credentials(
+    driver, username_or_email: str, password: str, headless: bool = False
+):
+    if username_or_email and password:
+        wait = WebDriverWait(driver, WAIT_TIMEOUT)
+        driver.get(f"{TIKTOK_URL}/login/phone-or-email/email")
+        time.sleep(3)
 
-    driver = webdriver.Chrome(
-        service=Service(ChromeDriverManager().install()), options=options
-    )
-    driver.get(TIKTOK_URL)
-    return driver
+        try:
+            user_field = wait.until(
+                EC.presence_of_element_located((By.NAME, "username"))
+            )
+            pass_field = driver.find_element(By.XPATH, "//input[@type='password']")
 
+            user_field.clear()
+            user_field.send_keys(username_or_email)
+            time.sleep(1)
 
-def login_with_credentials(driver, username_or_email: str, password: str):
-    wait = WebDriverWait(driver, WAIT_TIMEOUT)
+            pass_field.clear()
+            pass_field.send_keys(password)
+            time.sleep(1)
 
-    driver.get(f"{TIKTOK_URL}/login/phone-or-email/email")
-    time.sleep(3)
+            login_btn = driver.find_element(
+                By.XPATH, "//button[@data-e2e='login-button']"
+            )
+            login_btn.click()
+        except (TimeoutException, NoSuchElementException) as error:
+            print(f"\nNão foi possível preencher o login automaticamente: {error}")
+            if headless:
+                raise RuntimeError(
+                    "O login automático falhou no modo oculto. Tente novamente "
+                    "com o navegador visível para concluir o login manualmente."
+                ) from error
+            print("Faça login manualmente na janela do navegador.")
+    else:
+        if headless:
+            raise ValueError(
+                "O modo oculto exige e-mail/usuário e senha; login manual "
+                "precisa do navegador visível."
+            )
+        print("Faça login na sua conta pela janela do navegador.")
 
-    try:
-        user_field = wait.until(
-            EC.presence_of_element_located((By.NAME, "username"))
+    if headless:
+        print(
+            "Login enviado no modo oculto. Se o TikTok pedir CAPTCHA ou código "
+            "de verificação, execute novamente com o navegador visível."
         )
-        pass_field = driver.find_element(By.XPATH, "//input[@type='password']")
-
-        user_field.clear()
-        user_field.send_keys(username_or_email)
-        time.sleep(1)
-
-        pass_field.clear()
-        pass_field.send_keys(password)
-        time.sleep(1)
-
-        login_btn = driver.find_element(By.XPATH, "//button[@data-e2e='login-button']")
-        login_btn.click()
-
-    except (TimeoutException, NoSuchElementException) as e:
-        print(f"[!] Tidak menemukan form login otomatis ({e}).")
-        print("    Silakan login manual saja di browser yang terbuka.")
-
-    input(
-        "\n>> Jika muncul CAPTCHA atau kode verifikasi (OTP), selesaikan dulu di browser.\n"
-        ">> Setelah berhasil login dan halaman TikTok sudah terbuka normal,\n"
-        ">> kembali ke terminal ini dan tekan ENTER untuk melanjutkan...\n"
-    )
+    else:
+        input(
+            "Se aparecer CAPTCHA ou código de verificação, conclua no navegador. "
+            "Quando estiver logado, pressione ENTER aqui para continuar..."
+        )
 
 
 def go_to_repost_tab(driver, username: str):
@@ -88,7 +90,7 @@ def go_to_repost_tab(driver, username: str):
 
     is_selected = repost_tab.get_attribute("aria-selected")
     if is_selected != "true":
-        print("[!] Peringatan: tab 'Reposts' mungkin belum aktif (aria-selected != true).")
+        print("[!] Aviso: a aba de reposts talvez não esteja selecionada.")
 
 
 def scroll_to_load_more(driver, pause=2):
@@ -117,7 +119,7 @@ def open_first_video(driver, video_element) -> bool:
         time.sleep(2.5)
         return True
     except (ElementClickInterceptedException, StaleElementReferenceException) as e:
-        print(f"  [!] Gagal membuka video: {e}")
+        print(f"  [!] Não foi possível abrir o vídeo: {e}")
         return False
 
 
@@ -139,10 +141,10 @@ def remove_current_video_repost(driver, debug_dir="debug_screenshots") -> bool:
         target_btn = next((el for el in candidates if el.is_displayed()), None)
 
         if target_btn is None:
-            raise NoSuchElementException("Tidak ada elemen remove-repost yang terlihat.")
+            raise NoSuchElementException("Nenhum botão de remover repost está visível.")
 
         which = target_btn.get_attribute("data-e2e")
-        print(f"  -> Ditemukan tombol hapus repost via: {which}")
+        print(f"  -> Botão de remover repost encontrado: {which}")
 
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", target_btn)
         time.sleep(0.3)
@@ -150,7 +152,7 @@ def remove_current_video_repost(driver, debug_dir="debug_screenshots") -> bool:
         time.sleep(2) 
 
     except (TimeoutException, NoSuchElementException):
-        print("  [!] Tidak ada tombol remove-repost (chip maupun ikon share) yang ditemukan.")
+        print("  [!] Não encontrei o botão para remover o repost.")
         driver.save_screenshot(f"{debug_dir}/gagal_tombol_remove_repost.png")
         with open(f"{debug_dir}/gagal_tombol_remove_repost.html", "w", encoding="utf-8") as f:
             f.write(driver.page_source)
@@ -222,11 +224,11 @@ def delete_all_reposts(driver, username: str, max_rounds: int = 500):
         items = get_repost_items(driver)
 
     if not items:
-        print("Tidak ada repost sama sekali. Selesai.")
+        print("Nenhum repost encontrado. Nada a fazer.")
         return
 
     if not open_first_video(driver, items[0]):
-        print("Gagal membuka video repost pertama. Selesai.")
+        print("Não foi possível abrir o primeiro vídeo. Operação encerrada.")
         return
 
     deleted_count = 0
@@ -234,7 +236,7 @@ def delete_all_reposts(driver, username: str, max_rounds: int = 500):
 
     while rounds < max_rounds:
         rounds += 1
-        print(f"[{rounds}] Memproses video ke-{rounds}...")
+        print(f"[{rounds}] Verificando vídeo {rounds}...")
 
         try:
             success = remove_current_video_repost(driver)
@@ -243,16 +245,16 @@ def delete_all_reposts(driver, username: str, max_rounds: int = 500):
 
         if success:
             deleted_count += 1
-            print(f"  -> Repost dihapus (total terhapus: {deleted_count})")
+            print(f"  -> Repost removido (total: {deleted_count})")
         else:
-            print("  -> Video ini bukan repost atau gagal dihapus, lanjut ke video berikutnya.")
+            print("  -> Não removido; tentando o próximo vídeo.")
 
         moved = go_to_next_video(driver)
         if not moved:
-            print("Tombol 'Next video' tidak ada/nonaktif -> sudah di video terakhir. Selesai.")
+            print("Não há próximo vídeo disponível. Operação encerrada.")
             break
 
-    print(f"\nSelesai. Total repost berhasil dihapus: {deleted_count}")
+    print(f"\nConcluído. Total de reposts removidos: {deleted_count}")
 
 
 def delete_target_reposts(driver, username: str, keywords: list[str]):
@@ -285,7 +287,7 @@ def delete_target_reposts(driver, username: str, keywords: list[str]):
                 caption = ""
 
             if any(kw in caption for kw in keywords_lower):
-                print(f"Cocok dengan target, menghapus: {link}")
+                print(f"Palavra-chave encontrada. Removendo: {link}")
                 try:
                     if open_first_video(driver, item):
                         success = remove_current_video_repost(driver)
@@ -307,39 +309,74 @@ def delete_target_reposts(driver, username: str, keywords: list[str]):
 
         scroll_to_load_more(driver)
 
-    print(f"\nSelesai. Total repost target berhasil dihapus: {deleted_count}")
+    print(f"\nConcluído. Total de reposts removidos: {deleted_count}")
 
 
 if __name__ == "__main__":
+    print("=" * 56)
+    print("             GERENCIADOR DE REPOSTS DO TIKTOK")
+    print("=" * 56)
 
+    USERNAME = input("\nPerfil do TikTok para processar (sem @): ").strip()
+    USERNAME = USERNAME.removeprefix("@")
+    if not USERNAME:
+        print("O perfil não pode ficar vazio.")
+        raise SystemExit(1)
 
-    print("=== TikTok Repost Remover ===\n")
+    print("\n[1] Remover todos os reposts")
+    print("[2] Remover reposts por palavra-chave")
+    print("[3] Contar remoções manualmente")
+    escolha = input("Escolha uma opção [1-3]: ").strip()
+    if escolha not in {"1", "2", "3"}:
+        print("Opção inválida. Nenhum navegador foi aberto.")
+        raise SystemExit(1)
 
-    USERNAME = "USERNAME TIKTOK" #USERNAME TIKTOK
-    LOGIN_ID = "EMAIL" #EMAIL
-    PASSWORD = "TIKTOK_PASSWORD" #PASSWORD TIKTOK
+    print("\nExibição do navegador:")
+    print("[1] Visível (recomendado; permite resolver verificações)")
+    print("[2] Oculto (não permite login manual nem CAPTCHA)")
+    browser_choice = input("Escolha [1-2, padrão 1]: ").strip() or "1"
+    if browser_choice not in {"1", "2"}:
+        print("Opção inválida. Nenhum navegador foi aberto.")
+        raise SystemExit(1)
 
-    driver = start_driver()
-    login_with_credentials(driver, LOGIN_ID, PASSWORD)
+    headless = browser_choice == "2"
+    if headless and escolha == "3":
+        print("O contador manual precisa do navegador visível.")
+        raise SystemExit(1)
 
+    login_id = input(
+        "\nE-mail/usuário de login (ENTER para login manual): "
+    ).strip()
+    password = getpass.getpass("Senha (não será exibida): ") if login_id else ""
+    if headless and (not login_id or not password):
+        print("O modo oculto exige e-mail/usuário e senha.")
+        raise SystemExit(1)
+
+    driver = None
     try:
-        print("\nPilih mode:")
-        print("  1. Hapus SEMUA postingan ulang (Delete All Your Repost)") #FYI: It might not work in a single run, so you may need to run it again.
-        print("  2. Hapus HANYA repost tertentu (berdasarkan kata kunci caption)")
-        pilihan = input("Masukkan 1 atau 2: ").strip()
+        driver = start_driver(headless=headless)
+        login_with_credentials(driver, login_id, password, headless=headless)
 
-        if pilihan == "2":
+        if escolha == "2":
             kata_kunci_input = input(
-                "Masukkan kata kunci caption (pisahkan dengan koma jika lebih dari satu): "
+                "Palavras-chave da legenda (separe várias com vírgula): "
             ).strip()
             keywords = [k.strip() for k in kata_kunci_input.split(",") if k.strip()]
             if not keywords:
-                print("Tidak ada kata kunci dimasukkan. Membatalkan proses.")
+                print("Nenhuma palavra-chave informada. Operação cancelada.")
             else:
                 delete_target_reposts(driver, USERNAME, keywords)
-        else:
+        elif escolha == "3":
+            contador.count_reposts(driver, USERNAME)
+        elif escolha == "1":
             delete_all_reposts(driver, USERNAME)
+        else:
+            print("Opção inválida. Nenhum repost foi removido.")
 
     finally:
-        input("\nTekan ENTER untuk menutup browser...")
-        driver.quit()
+        if driver is not None:
+            try:
+                if not headless:
+                    input("\nPressione ENTER para fechar o navegador...")
+            finally:
+                driver.quit()
