@@ -1,4 +1,4 @@
-# TikTok Repost Remover
+# RepostRemoverLINUX
 
 Automatiza a remoção de reposts do TikTok usando Python, Selenium e Brave no Linux. O programa é controlado pelo terminal; você escolhe se quer deixar o navegador visível ou oculto.
 
@@ -77,4 +77,3 @@ No Linux, o programa abre Brave e ajusta o ChromeDriver à versão instalada. Em
 - `tiktok.py` — menu do terminal e modos de remoção/contador.
 - `contador.py` — contador manual com confirmação do usuário.
 - `selenium_driver.py` — inicialização do Brave no Linux e do Chrome em outros sistemas.
-
