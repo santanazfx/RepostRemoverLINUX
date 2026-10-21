@@ -22,7 +22,7 @@ def count_reposts(driver, usuario):
 
             seletores = [
                 "[data-e2e='repost-action-tag']",
-                "[data-e2e='video-share-repost'][aria-label='Remove repost']",
+                "[data-e2e='video-share-repost']",
                 "#icon-element-repost[aria-label='Remove repost']",
             ]
 

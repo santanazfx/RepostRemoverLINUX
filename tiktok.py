@@ -2,6 +2,9 @@
 
 import getpass
 import time
+from datetime import datetime
+from pathlib import Path
+
 import contador
 from selenium_driver import start_driver
 from selenium.webdriver.common.by import By
@@ -99,7 +102,7 @@ def scroll_to_load_more(driver, pause=2):
     driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
     time.sleep(pause)
     new_height = driver.execute_script("return document.body.scrollHeight")
-    return new_height != last_height 
+    return new_height != last_height
 
 
 def get_repost_items(driver):
@@ -124,14 +127,11 @@ def open_first_video(driver, video_element) -> bool:
 
 
 def remove_current_video_repost(driver, debug_dir="debug_screenshots") -> bool:
-    import os
-
-    os.makedirs(debug_dir, exist_ok=True)
     wait = WebDriverWait(driver, WAIT_TIMEOUT)
 
     combined_selector = (
         "[data-e2e='repost-action-tag'], "
-        "[data-e2e='video-share-repost'][aria-label='Remove repost'], "
+        "[data-e2e='video-share-repost'], "
         "#icon-element-repost[aria-label='Remove repost']"
     )
 
@@ -149,13 +149,63 @@ def remove_current_video_repost(driver, debug_dir="debug_screenshots") -> bool:
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", target_btn)
         time.sleep(0.3)
         driver.execute_script("arguments[0].click();", target_btn)
-        time.sleep(2) 
+        time.sleep(2)
 
     except (TimeoutException, NoSuchElementException):
-        print("  [!] Não encontrei o botão para remover o repost.")
-        driver.save_screenshot(f"{debug_dir}/gagal_tombol_remove_repost.png")
-        with open(f"{debug_dir}/gagal_tombol_remove_repost.html", "w", encoding="utf-8") as f:
+        debug_path = Path(debug_dir)
+        if not debug_path.is_absolute():
+            debug_path = Path(__file__).resolve().parent / debug_path
+        debug_path.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        screenshot_path = debug_path / f"remove_repost_{timestamp}.png"
+        html_path = debug_path / f"remove_repost_{timestamp}.html"
+
+        related_controls = []
+        for element in driver.find_elements(
+            By.CSS_SELECTOR, "button, [role='button'], [data-e2e]"
+        ):
+            try:
+                if not element.is_displayed():
+                    continue
+
+                description = " ".join(
+                    value
+                    for value in (
+                        element.get_attribute("data-e2e"),
+                        element.get_attribute("aria-label"),
+                        element.get_attribute("title"),
+                        element.text,
+                    )
+                    if value
+                ).strip()
+                if any(
+                    term in description.lower()
+                    for term in ("repost", "re-post", "share", "compartilh", "republic")
+                ):
+                    related_controls.append(description[:200])
+            except StaleElementReferenceException:
+                continue
+
+        print(
+            "  [!] Não encontrei os seletores conhecidos do botão de remover. "
+            "A interface do TikTok pode ter mudado."
+        )
+        print(f"  Página atual: {driver.current_url}")
+        if related_controls:
+            print("  Controles visíveis relacionados encontrados:")
+            for description in related_controls[:15]:
+                print(f"    - {description}")
+        else:
+            print("  Nenhum controle visível com rótulo relacionado foi identificado.")
+
+        if not driver.save_screenshot(str(screenshot_path)):
+            raise RuntimeError(
+                f"Falha ao salvar screenshot de diagnóstico em: {screenshot_path}"
+            )
+        with html_path.open("w", encoding="utf-8") as f:
             f.write(driver.page_source)
+        print(f"  Diagnóstico salvo em:\n    {screenshot_path}\n    {html_path}")
         return False
 
     try:
@@ -172,7 +222,7 @@ def remove_current_video_repost(driver, debug_dir="debug_screenshots") -> bool:
         driver.execute_script("arguments[0].click();", confirm_btn)
         time.sleep(1.5)
     except TimeoutException:
-        pass  
+        pass
 
     return True
 
@@ -206,7 +256,7 @@ def go_to_next_video(driver, timeout=8) -> bool:
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", next_btn)
         time.sleep(0.3)
         driver.execute_script("arguments[0].click();", next_btn)
-        
+
         WebDriverWait(driver, timeout).until(lambda d: d.current_url != before_url)
         time.sleep(1.5)
         return True
