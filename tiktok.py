@@ -1,7 +1,6 @@
 """Interactive TikTok repost management."""
 
 import getpass
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -27,7 +26,6 @@ def login_with_credentials(
     if username_or_email and password:
         wait = WebDriverWait(driver, WAIT_TIMEOUT)
         driver.get(f"{TIKTOK_URL}/login/phone-or-email/email")
-        time.sleep(3)
 
         try:
             user_field = wait.until(
@@ -37,14 +35,14 @@ def login_with_credentials(
 
             user_field.clear()
             user_field.send_keys(username_or_email)
-            time.sleep(1)
 
             pass_field.clear()
             pass_field.send_keys(password)
-            time.sleep(1)
 
-            login_btn = driver.find_element(
-                By.XPATH, "//button[@data-e2e='login-button']"
+            login_btn = wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[@data-e2e='login-button']")
+                )
             )
             login_btn.click()
         except (TimeoutException, NoSuchElementException) as error:
@@ -76,9 +74,7 @@ def login_with_credentials(
 
 
 def go_to_repost_tab(driver, username: str):
-
     driver.get(f"{TIKTOK_URL}/@{username}")
-    time.sleep(3)
 
     wait = WebDriverWait(driver, WAIT_TIMEOUT)
 
@@ -86,23 +82,32 @@ def go_to_repost_tab(driver, username: str):
         EC.presence_of_element_located((By.CSS_SELECTOR, "[data-e2e='repost-tab']"))
     )
 
-    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", repost_tab)
-    time.sleep(0.5)
     driver.execute_script("arguments[0].click();", repost_tab)
-    time.sleep(2.5)
 
-    is_selected = repost_tab.get_attribute("aria-selected")
-    if is_selected != "true":
+    try:
+        WebDriverWait(driver, 5, poll_frequency=0.2).until(
+            lambda current_driver: current_driver.find_element(
+                By.CSS_SELECTOR, "[data-e2e='repost-tab']"
+            ).get_attribute("aria-selected")
+            == "true"
+        )
+    except TimeoutException:
         print("[!] Aviso: a aba de reposts talvez não esteja selecionada.")
 
 
 def scroll_to_load_more(driver, pause=2):
-
     last_height = driver.execute_script("return document.body.scrollHeight")
     driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-    time.sleep(pause)
-    new_height = driver.execute_script("return document.body.scrollHeight")
-    return new_height != last_height
+    try:
+        WebDriverWait(driver, pause, poll_frequency=0.2).until(
+            lambda current_driver: current_driver.execute_script(
+                "return document.body.scrollHeight"
+            )
+            != last_height
+        )
+        return True
+    except TimeoutException:
+        return False
 
 
 def get_repost_items(driver):
@@ -116,12 +121,17 @@ def get_repost_items(driver):
 
 def open_first_video(driver, video_element) -> bool:
     try:
-        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", video_element)
-        time.sleep(0.3)
+        before_url = driver.current_url
         driver.execute_script("arguments[0].click();", video_element)
-        time.sleep(2.5)
+        WebDriverWait(driver, WAIT_TIMEOUT, poll_frequency=0.2).until(
+            EC.url_changes(before_url)
+        )
         return True
-    except (ElementClickInterceptedException, StaleElementReferenceException) as e:
+    except (
+        ElementClickInterceptedException,
+        StaleElementReferenceException,
+        TimeoutException,
+    ) as e:
         print(f"  [!] Não foi possível abrir o vídeo: {e}")
         return False
 
@@ -146,10 +156,7 @@ def remove_current_video_repost(driver, debug_dir="debug_screenshots") -> bool:
         which = target_btn.get_attribute("data-e2e")
         print(f"  -> Botão de remover repost encontrado: {which}")
 
-        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", target_btn)
-        time.sleep(0.3)
         driver.execute_script("arguments[0].click();", target_btn)
-        time.sleep(2)
 
     except (TimeoutException, NoSuchElementException):
         debug_path = Path(debug_dir)
@@ -209,7 +216,7 @@ def remove_current_video_repost(driver, debug_dir="debug_screenshots") -> bool:
         return False
 
     try:
-        confirm_btn = WebDriverWait(driver, 3).until(
+        confirm_btn = WebDriverWait(driver, 3, poll_frequency=0.2).until(
             EC.element_to_be_clickable(
                 (
                     By.XPATH,
@@ -220,7 +227,6 @@ def remove_current_video_repost(driver, debug_dir="debug_screenshots") -> bool:
             )
         )
         driver.execute_script("arguments[0].click();", confirm_btn)
-        time.sleep(1.5)
     except TimeoutException:
         pass
 
@@ -237,7 +243,7 @@ def go_to_next_video(driver, timeout=8) -> bool:
     try:
         before_url = driver.current_url
 
-        WebDriverWait(driver, 5).until(
+        WebDriverWait(driver, 5, poll_frequency=0.2).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, combined_selector))
         )
         candidates = driver.find_elements(By.CSS_SELECTOR, combined_selector)
@@ -253,12 +259,11 @@ def go_to_next_video(driver, timeout=8) -> bool:
         if is_disabled:
             return False
 
-        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", next_btn)
-        time.sleep(0.3)
         driver.execute_script("arguments[0].click();", next_btn)
 
-        WebDriverWait(driver, timeout).until(lambda d: d.current_url != before_url)
-        time.sleep(1.5)
+        WebDriverWait(driver, timeout, poll_frequency=0.2).until(
+            EC.url_changes(before_url)
+        )
         return True
 
     except (TimeoutException, NoSuchElementException, StaleElementReferenceException):
@@ -341,15 +346,17 @@ def delete_target_reposts(driver, username: str, keywords: list[str]):
                 try:
                     if open_first_video(driver, item):
                         success = remove_current_video_repost(driver)
+                        video_url = driver.current_url
                         driver.back()
-                        time.sleep(2)
+                        WebDriverWait(driver, WAIT_TIMEOUT, poll_frequency=0.2).until(
+                            EC.url_changes(video_url)
+                        )
                     else:
                         success = False
                 except StaleElementReferenceException:
                     success = False
                 if success:
                     deleted_count += 1
-                time.sleep(1.5)
                 break
 
         if not found_new:
