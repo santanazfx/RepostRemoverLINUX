@@ -38,10 +38,10 @@ cd RepostRemoverLINUX
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install selenium webdriver-manager
+python -m pip install -r requirements.txt
 ```
 
-Ative `.venv` novamente (`source .venv/bin/activate`) sempre que abrir um terminal novo para usar o projeto.
+Ative `.venv` novamente (`source .venv/bin/activate`) sempre que abrir um terminal novo para usar o projeto. Se iniciar `python3 tiktok.py` sem ativar o ambiente, o programa usará automaticamente a `.venv` local, caso ela já exista.
 
 ### 4. Inicie
 

@@ -1,20 +1,63 @@
 """Interactive TikTok repost management."""
 
 import getpass
+import os
+import sys
 from datetime import datetime
 from pathlib import Path
 
-import contador
-from selenium_driver import start_driver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import (
-    TimeoutException,
-    NoSuchElementException,
-    StaleElementReferenceException,
-    ElementClickInterceptedException,
-)
+try:
+    import contador
+    from selenium_driver import start_driver
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.common.exceptions import (
+        TimeoutException,
+        NoSuchElementException,
+        StaleElementReferenceException,
+        ElementClickInterceptedException,
+    )
+except ModuleNotFoundError as error:
+    if error.name not in {"selenium", "webdriver_manager"}:
+        raise
+
+    project_dir = Path(__file__).resolve().parent
+    is_windows = sys.platform.startswith("win")
+    if is_windows:
+        venv_python = project_dir / ".venv" / "Scripts" / "python.exe"
+    else:
+        venv_python = project_dir / ".venv" / "bin" / "python"
+
+    if (
+        __name__ == "__main__"
+        and venv_python.is_file()
+        and Path(sys.executable).absolute() != venv_python.absolute()
+    ):
+        os.execv(
+            str(venv_python),
+            [str(venv_python), str(Path(__file__).resolve()), *sys.argv[1:]],
+        )
+
+    if is_windows:
+        setup_commands = (
+            "  py -m venv .venv\n"
+            r"  .venv\Scripts\python.exe -m pip install -r requirements.txt" "\n"
+            r"  .venv\Scripts\python.exe tiktok.py"
+        )
+    else:
+        setup_commands = (
+            "  python3 -m venv .venv\n"
+            "  .venv/bin/python -m pip install -r requirements.txt\n"
+            "  .venv/bin/python tiktok.py"
+        )
+
+    print(
+        f"Dependência Python ausente: {error.name}.\n"
+        f"Configure o ambiente do projeto com:\n{setup_commands}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1) from error
 
 TIKTOK_URL = "https://www.tiktok.com"
 WAIT_TIMEOUT = 15
