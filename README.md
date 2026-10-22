@@ -8,7 +8,7 @@ Automatiza a remoção de reposts do TikTok usando Python, Selenium e Brave no L
 
 | Opção | Ação |
 | --- | --- |
-| `1` | Percorrer os reposts e tentar remover todos |
+| `1` | Percorrer os reposts e remover até restar 1 |
 | `2` | Remover reposts cuja legenda corresponde a palavras-chave |
 | `3` | Abrir o contador manual e confirmar cada remoção |
 

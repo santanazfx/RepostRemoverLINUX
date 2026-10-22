@@ -5,6 +5,8 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
+from unicodedata import normalize
+from urllib.parse import urlsplit
 
 try:
     import contador
@@ -139,14 +141,16 @@ def go_to_repost_tab(driver, username: str):
 
 
 def scroll_to_load_more(driver, pause=2):
-    last_height = driver.execute_script("return document.body.scrollHeight")
+    last_count = driver.execute_script(
+        "return document.querySelectorAll('#user-repost-item-list a[href]').length"
+    )
     driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
     try:
         WebDriverWait(driver, pause, poll_frequency=0.2).until(
             lambda current_driver: current_driver.execute_script(
-                "return document.body.scrollHeight"
+                "return document.querySelectorAll('#user-repost-item-list a[href]').length"
             )
-            != last_height
+            > last_count
         )
         return True
     except TimeoutException:
@@ -162,12 +166,32 @@ def get_repost_items(driver):
     return container.find_elements(By.TAG_NAME, "a")
 
 
-def open_first_video(driver, video_element) -> bool:
+def get_repost_links(driver):
+    return driver.execute_script(
+        """
+        const list = document.querySelector("#user-repost-item-list");
+        if (!list) return [];
+        return [...list.querySelectorAll("a[href]")].map(link => link.href);
+        """
+    )
+
+
+def canonical_video_url(url: str) -> str:
+    parsed = urlsplit(url)
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
+
+
+def open_first_video(driver, video_element, expected_url: str | None = None) -> bool:
     try:
         before_url = driver.current_url
         driver.execute_script("arguments[0].click();", video_element)
         WebDriverWait(driver, WAIT_TIMEOUT, poll_frequency=0.2).until(
-            EC.url_changes(before_url)
+            lambda current_driver: (
+                canonical_video_url(current_driver.current_url)
+                == canonical_video_url(expected_url)
+                if expected_url
+                else current_driver.current_url != before_url
+            )
         )
         return True
     except (
@@ -179,25 +203,123 @@ def open_first_video(driver, video_element) -> bool:
         return False
 
 
-def remove_current_video_repost(driver, debug_dir="debug_screenshots") -> bool:
-    wait = WebDriverWait(driver, WAIT_TIMEOUT)
+def is_remove_repost_label(label: str | None) -> bool:
+    if not label:
+        return False
 
-    combined_selector = (
-        "[data-e2e='repost-action-tag'], "
-        "[data-e2e='video-share-repost'], "
-        "#icon-element-repost[aria-label='Remove repost']"
+    normalized = normalize("NFKD", label).encode("ascii", "ignore").decode().lower()
+    has_remove_action = any(
+        term in normalized
+        for term in ("remove", "remov", "undo", "desfaz", "elimin", "supprim", "hapus")
+    )
+    has_repost_target = "repost" in normalized or "republic" in normalized
+    return has_remove_action and has_repost_target
+
+
+def get_repost_action_label(driver):
+    return driver.execute_script(
+        """
+        const visible = element => {
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return rect.width > 0 && rect.height > 0 &&
+                style.visibility !== "hidden" && style.display !== "none";
+        };
+        const action = [...document.querySelectorAll(
+            "[data-e2e='video-share-repost'], #icon-element-repost"
+        )].find(visible);
+        return action ? (
+            action.getAttribute("aria-label") ||
+            action.getAttribute("title") ||
+            action.innerText ||
+            ""
+        ) : null;
+        """
     )
 
+
+def get_repost_removal_confirmation(driver):
+    for button in driver.find_elements(
+        By.CSS_SELECTOR, "[role='dialog'] button, [role='alertdialog'] button"
+    ):
+        if not button.is_displayed():
+            continue
+        label = " ".join(
+            value
+            for value in (
+                button.get_attribute("aria-label"),
+                button.get_attribute("title"),
+                button.text,
+            )
+            if value
+        )
+        normalized = normalize("NFKD", label).encode("ascii", "ignore").decode().lower()
+        if any(term in normalized for term in ("remove", "remov", "undo", "desfaz")):
+            return button
+    return None
+
+
+def repost_removal_confirmed(driver, original_label: str) -> bool:
+    current_label = get_repost_action_label(driver)
+    if (
+        current_label
+        and current_label != original_label
+        and not is_remove_repost_label(current_label)
+    ):
+        return True
+
+    status_text = driver.execute_script(
+        """
+        return [...document.querySelectorAll("[role='status']")]
+            .map(status => status.innerText || "")
+            .join(" ");
+        """
+    )
+    normalized_status = normalize("NFKD", status_text).encode("ascii", "ignore").decode().lower()
+    return (
+        any(term in normalized_status for term in ("remov", "remove", "desfaz", "undo"))
+        and any(term in normalized_status for term in ("repost", "republic"))
+    )
+
+
+def remove_current_video_repost(driver, debug_dir="debug_screenshots") -> bool:
+    wait = WebDriverWait(driver, WAIT_TIMEOUT, poll_frequency=0.2)
+
     try:
-        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, combined_selector)))
-        candidates = driver.find_elements(By.CSS_SELECTOR, combined_selector)
-        target_btn = next((el for el in candidates if el.is_displayed()), None)
+        wait.until(lambda current_driver: get_repost_action_label(current_driver) is not None)
+        candidates = driver.find_elements(
+            By.CSS_SELECTOR,
+            "[data-e2e='video-share-repost'], #icon-element-repost",
+        )
+        target_btn = next(
+            (
+                element
+                for element in candidates
+                if element.is_displayed()
+                and is_remove_repost_label(
+                    element.get_attribute("aria-label")
+                    or element.get_attribute("title")
+                    or element.text
+                )
+            ),
+            None,
+        )
 
         if target_btn is None:
-            raise NoSuchElementException("Nenhum botão de remover repost está visível.")
+            action_label = get_repost_action_label(driver)
+            print(
+                "  [!] A ação disponível não é uma remoção"
+                f" ({action_label!r}); interrompendo para evitar republicar."
+            )
+            return False
 
         which = target_btn.get_attribute("data-e2e")
-        print(f"  -> Botão de remover repost encontrado: {which}")
+        original_label = (
+            target_btn.get_attribute("aria-label")
+            or target_btn.get_attribute("title")
+            or target_btn.text
+        )
+        print(f"  -> Ação de remoção identificada: {which} ({original_label})")
 
         driver.execute_script("arguments[0].click();", target_btn)
 
@@ -259,24 +381,36 @@ def remove_current_video_repost(driver, debug_dir="debug_screenshots") -> bool:
         return False
 
     try:
-        confirm_btn = WebDriverWait(driver, 3, poll_frequency=0.2).until(
-            EC.element_to_be_clickable(
-                (
-                    By.XPATH,
-                    "//button[contains(translate(., 'REMOVEUNDOCONFIRM', 'removeundoconfirm'), 'remove')"
-                    " or contains(translate(., 'REMOVEUNDOCONFIRM', 'removeundoconfirm'), 'undo')"
-                    " or contains(translate(., 'HAPUSKONFIRMASI', 'hapuskonfirmasi'), 'hapus')]",
+        result = WebDriverWait(driver, 3, poll_frequency=0.2).until(
+            lambda current_driver: (
+                ("removed", None)
+                if repost_removal_confirmed(current_driver, original_label)
+                else (
+                    ("confirm", confirm_button)
+                    if (
+                        confirm_button := get_repost_removal_confirmation(
+                            current_driver
+                        )
+                    )
+                    else False
                 )
             )
         )
-        driver.execute_script("arguments[0].click();", confirm_btn)
+        if result[0] == "confirm":
+            driver.execute_script("arguments[0].click();", result[1])
+            WebDriverWait(driver, 5, poll_frequency=0.2).until(
+                lambda current_driver: repost_removal_confirmed(
+                    current_driver, original_label
+                )
+            )
     except TimeoutException:
-        pass
+        print("  [!] O TikTok não confirmou a remoção; não vou avançar.")
+        return False
 
     return True
 
 
-def go_to_next_video(driver, timeout=8) -> bool:
+def go_to_next_video(driver, expected_url: str, timeout=8) -> bool:
     combined_selector = (
         "[data-e2e='arrow-right'], "
         "button[aria-label='Go to next video'], "
@@ -305,7 +439,11 @@ def go_to_next_video(driver, timeout=8) -> bool:
         driver.execute_script("arguments[0].click();", next_btn)
 
         WebDriverWait(driver, timeout, poll_frequency=0.2).until(
-            EC.url_changes(before_url)
+            lambda current_driver: (
+                canonical_video_url(current_driver.current_url)
+                == canonical_video_url(expected_url)
+                and current_driver.current_url != before_url
+            )
         )
         return True
 
@@ -313,29 +451,64 @@ def go_to_next_video(driver, timeout=8) -> bool:
         return False
 
 
-def delete_all_reposts(driver, username: str, max_rounds: int = 500):
+def delete_all_reposts(
+    driver, username: str, keep_reposts: int = 1, max_rounds: int = 10000
+):
     go_to_repost_tab(driver, username)
 
-    items = get_repost_items(driver)
-    if not items:
-        scroll_to_load_more(driver)
-        items = get_repost_items(driver)
-
-    if not items:
+    try:
+        WebDriverWait(driver, WAIT_TIMEOUT, poll_frequency=0.2).until(
+            lambda current_driver: bool(get_repost_links(current_driver))
+        )
+    except TimeoutException:
         print("Nenhum repost encontrado. Nada a fazer.")
         return
 
-    if not open_first_video(driver, items[0]):
+    links = []
+    stagnant_scrolls = 0
+    while stagnant_scrolls < 3 and len(links) < max_rounds:
+        scroll_to_load_more(driver, pause=1.2)
+        current_links = list(dict.fromkeys(get_repost_links(driver)))
+        if len(current_links) > len(links):
+            links = current_links
+            stagnant_scrolls = 0
+        else:
+            stagnant_scrolls += 1
+
+    if len(links) >= max_rounds:
+        print(
+            f"A lista atingiu o limite de segurança ({max_rounds}); "
+            "não vou iniciar uma remoção parcial."
+        )
+        return
+
+    if not links:
+        print("Nenhum repost encontrado. Nada a fazer.")
+        return
+
+    if keep_reposts < 1:
+        raise ValueError("A quantidade de reposts a manter deve ser pelo menos 1.")
+
+    removal_count = len(links) - keep_reposts
+    if removal_count <= 0:
+        print(f"Há {len(links)} repost(s); nenhum será removido.")
+        return
+
+    items = get_repost_items(driver)
+    if not items or not open_first_video(driver, items[0], links[0]):
         print("Não foi possível abrir o primeiro vídeo. Operação encerrada.")
         return
 
     deleted_count = 0
-    rounds = 0
+    for index in range(removal_count):
+        if canonical_video_url(driver.current_url) != canonical_video_url(links[index]):
+            print(
+                "A navegação saiu da lista de republicações conhecidas. "
+                "Operação encerrada por segurança."
+            )
+            break
 
-    while rounds < max_rounds:
-        rounds += 1
-        print(f"[{rounds}] Verificando vídeo {rounds}...")
-
+        print(f"[{index + 1}/{removal_count}] Verificando republicação...")
         try:
             success = remove_current_video_repost(driver)
         except StaleElementReferenceException:
@@ -345,14 +518,23 @@ def delete_all_reposts(driver, username: str, max_rounds: int = 500):
             deleted_count += 1
             print(f"  -> Repost removido (total: {deleted_count})")
         else:
-            print("  -> Não removido; tentando o próximo vídeo.")
-
-        moved = go_to_next_video(driver)
-        if not moved:
-            print("Não há próximo vídeo disponível. Operação encerrada.")
+            print("  -> Não houve confirmação. Operação encerrada sem avançar.")
             break
 
-    print(f"\nConcluído. Total de reposts removidos: {deleted_count}")
+        if index + 1 < removal_count and not go_to_next_video(
+            driver, expected_url=links[index + 1]
+        ):
+            print(
+                "O próximo vídeo não corresponde à lista de republicações. "
+                "Operação encerrada por segurança."
+            )
+            break
+
+    remaining = len(links) - deleted_count
+    print(
+        f"\nConcluído. Remoções confirmadas: {deleted_count}. "
+        f"Republicações restantes na lista carregada: {remaining}."
+    )
 
 
 def delete_target_reposts(driver, username: str, keywords: list[str]):
@@ -423,7 +605,7 @@ if __name__ == "__main__":
         print("O perfil não pode ficar vazio.")
         raise SystemExit(1)
 
-    print("\n[1] Remover todos os reposts")
+    print("\n[1] Remover reposts até restar 1")
     print("[2] Remover reposts por palavra-chave")
     print("[3] Contar remoções manualmente")
     escolha = input("Escolha uma opção [1-3]: ").strip()
